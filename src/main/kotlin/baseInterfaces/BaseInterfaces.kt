@@ -6,7 +6,6 @@ import org.example.dataModels.Verdict
 
 interface KaiFuzzer {
     suspend fun run()
-    fun stop()
 }
 
 interface KaiInputGenerator {
@@ -27,8 +26,6 @@ interface KaiIssueManager {
 
 interface KaiReducer {
     suspend fun reduce(
-        faultyVerdict: Verdict,
-        sutHandler: KaiSutHandler,
-        oracle: KaiOracle
-    ) : String
+        input: FuzzInput
+    ) : FuzzInput
 }

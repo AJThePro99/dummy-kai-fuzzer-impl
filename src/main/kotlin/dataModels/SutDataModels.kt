@@ -12,6 +12,10 @@ enum class SutBackend {
 data class CompilerExecution(
     val backend: SutBackend,
     val version: String,
+    val output: CompilerExecutionOutput
+)
+
+data class CompilerExecutionOutput(
     val exitCode: Int,
     val standardOutput: String,
     val errorOutput: String?,
@@ -23,3 +27,7 @@ data class SutResult(
     // map each backend to a list of the outputs of each compiler version
     val executions: Map<SutBackend, List<CompilerExecution>>
 )
+
+fun Map<SutBackend, List<CompilerExecution>>.toOutput() : Map<SutBackend, List<CompilerExecutionOutput>> {
+    return this.mapValues { (_, compilerExecutions) -> compilerExecutions.map { it.output } }
+}

@@ -1,13 +1,18 @@
 package org.example.dummyImplementations
 
-import org.example.baseInterfaces.KaiOracle
 import org.example.baseInterfaces.KaiReducer
-import org.example.baseInterfaces.KaiSutHandler
-import org.example.dataModels.Verdict
+import org.example.dataModels.FuzzInput
 
 class DummyReducer : KaiReducer {
-    override suspend fun reduce(faultyVerdict: Verdict, sutHandler: KaiSutHandler, oracle: KaiOracle): String {
+    override suspend fun reduce(input: FuzzInput): FuzzInput {
         // run reducing operations, and then return the reduced code.
-        return faultyVerdict.result.input.sourceCode
+        val reducedSourceCode = input.sourceCode;
+
+        return FuzzInput(
+            id = input.id,
+            sourceCode = reducedSourceCode,
+            generatorId = "Reducer",
+            seedUsed = input.seedUsed
+        )
     }
 }

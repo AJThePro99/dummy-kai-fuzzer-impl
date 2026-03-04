@@ -18,9 +18,9 @@ The modules are:
 
 ---
 
-### Code Overview
+## Code Overview
 
-Driver Code
+### Driver Code
 
 ```kotlin
 suspend fun main(): Unit = coroutineScope {
@@ -29,35 +29,34 @@ suspend fun main(): Unit = coroutineScope {
     val mySutHandler = DummySutHandler(
         backends = mapOf(
             SutBackend.JVM to listOf("1.5.0", "1.9.20", "2.3.0"),
-            SutBackend.JS to listOf("1.8.0", "2.3.0", "2.3.10")
+            SutBackend.JS to listOf("1.8.0", "2.3.0")
         )
     )
 
     val myOracle = DummyOracle()
 
-    val fuzzer: KaiFuzzer = DefaultKaiFuzzer(
+    val fuzzer : KaiFuzzer = DefaultKaiFuzzer(
         inputGenerator = myGenerator,
         sutHandler = mySutHandler,
         oracle = myOracle,
         issueManager = DummyIssueManager(),
-        reducer = null // reducer is optional
+        reducer = DummyReducer() // reducer is optional
     )
+    val programs = 5 // Number of programs to generate and evaluate
 
     println("===Initiating Kai Fuzzer===")
-
-    val fuzzJob = launch {
-        fuzzer.run()
+    
+    repeat(programs) {
+        launch {
+            fuzzer.run()
+        }
     }
-
-    delay(10_000) // run for 10_000 ms
-    fuzzer.stop()
-    fuzzJob.join()
-
-    println("Fuzzing is complete")
+    
+    println("===Fuzzing Complete===")
 }
 ```
 
-The Input Generator
+### The Input Generator
 
 ```kotlin
 interface KaiInputGenerator {
@@ -82,7 +81,7 @@ class DummyGenerator(private val seed: Long?) : KaiInputGenerator {
 }
 ```
 
-System Under Test (SUT) handler
+### System Under Test (SUT) handler
 
 ```kotlin
 interface KaiSutHandler {
@@ -99,6 +98,10 @@ enum class SutBackend {
 data class CompilerExecution(
     val backend: SutBackend,
     val version: String,
+    val output: CompilerExecutionOutput
+)
+
+data class CompilerExecutionOutput(
     val exitCode: Int,
     val standardOutput: String,
     val errorOutput: String?,
@@ -116,9 +119,14 @@ class DummySutHandler(private val backends: Map<SutBackend, List<String>>) : Kai
         return SutResult(input, emptyMap())
     }
 }
+
+// helper function to compare the outputs between reduced & non-reduced version
+fun Map<SutBackend, List<CompilerExecution>>.toOutput() : Map<SutBackend, List<CompilerExecutionOutput>> {
+    return this.mapValues { (_, compilerExecutions) -> compilerExecutions.map { it.output } }
+}
 ```
 
-The Oracle (Validator)
+### The Oracle (Validator)
 
 ```kotlin
 interface KaiOracle {
@@ -145,7 +153,7 @@ class DummyOracle : KaiOracle {
 }
 ```
 
-The Issue Manager
+### The Issue Manager
 
 ```kotlin
 interface KaiIssueManager {
@@ -155,7 +163,6 @@ interface KaiIssueManager {
 data class IssueManagerConfig(
     val saveDirectory: String = "./fuzzer_output",
     val saveAllGenerated: Boolean = false, // if true, this saves all generated programs, regardless of correctness
-    val enableReduction: Boolean = true
 )
 
 class DummyIssueManager(
@@ -169,26 +176,31 @@ class DummyIssueManager(
 }
 ```
 
-The Reducer
+### The Reducer
 
 ```kotlin
 interface KaiReducer {
     suspend fun reduce(
-        faultyVerdict: Verdict,
-        sutHandler: KaiSutHandler,
-        oracle: KaiOracle
-    ): String
+        input: FuzzInput
+    ) : FuzzInput
 }
 
 class DummyReducer : KaiReducer {
-    override suspend fun reduce(faultyVerdict: Verdict, sutHandler: KaiSutHandler, oracle: KaiOracle): String {
+    override suspend fun reduce(input: FuzzInput): FuzzInput {
         // run reducing operations, and then return the reduced code.
-        return faultyVerdict.result.input.sourceCode
+        val reducedSourceCode = input.sourceCode;
+
+        return FuzzInput(
+            id = input.id,
+            sourceCode = reducedSourceCode,
+            generatorId = "Reducer",
+            seedUsed = input.seedUsed
+        )
     }
 }
 ```
 
-The Default `KaiFuzzer()` class to bring it all together
+### The `DefaultKaiFuzzer()` class to bring it all together
 
 ```kotlin
 class DefaultKaiFuzzer(
@@ -198,26 +210,23 @@ class DefaultKaiFuzzer(
     private val issueManager: KaiIssueManager,
     private val reducer: KaiReducer? = null
 ) : KaiFuzzer {
-    private var isRunning = false
-
     override suspend fun run() {
-        isRunning = true
+        val input = inputGenerator.generateFuzzInput()
+        val sutResult = sutHandler.runCompilers(input)
+        var verdict = oracle.evaluate(sutResult)
 
-        while (isRunning) {
-            val input = inputGenerator.generateFuzzInput()
-            val sutResult = sutHandler.runCompilers(input)
-            val verdict = oracle.evaluate(sutResult)
+        if (reducer != null && verdict.status != VerdictStatus.CORRECT) { // reduces only anomaly inducing programs
+            val rxInput: FuzzInput = reducer.reduce(verdict.result.input)
+            val rxSutResult: SutResult = sutHandler.runCompilers(rxInput)
+            val rxVerdict: Verdict = oracle.evaluate(rxSutResult)
 
-            if (verdict.status == VerdictStatus.BUG_FOUND) {
-                // if reducer is attached, the code will be reduced here
-                issueManager.processIssue(verdict)
+            if (rxVerdict.result.executions.toOutput() == verdict.result.executions.toOutput()) {
+                verdict = rxVerdict
+            } else {
+                throw RuntimeException("Error in reduction algorithm. Outputs of programs do not match.")
             }
         }
-
-    }
-
-    override fun stop() {
-        isRunning = false
+        issueManager.processIssue(verdict)
     }
 }
 ```
