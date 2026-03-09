@@ -5,7 +5,7 @@ import org.example.dataModels.SutResult
 import org.example.dataModels.Verdict
 
 interface KaiFuzzer {
-    suspend fun run()
+    suspend fun run(programs: Long, jobs: Int)
 }
 
 interface KaiInputGenerator {

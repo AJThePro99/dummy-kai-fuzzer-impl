@@ -1,4 +1,4 @@
-# Kotlin Compiler Fuzzer [High level overview]
+# Kotlin Compiler Fuzzer [Proof of Concept]
 
 A dummy Kotlin compiler fuzzer demonstrating a pluggable architecture that supports future evolution.
 
@@ -40,18 +40,11 @@ suspend fun main(): Unit = coroutineScope {
         sutHandler = mySutHandler,
         oracle = myOracle,
         issueManager = DummyIssueManager(),
-        reducer = DummyReducer() // reducer is optional
+        reducer = DummyReducer()            // reducer is optional but recommended
     )
-    val programs = 5 // Number of programs to generate and evaluate
 
     println("===Initiating Kai Fuzzer===")
-    
-    repeat(programs) {
-        launch {
-            fuzzer.run()
-        }
-    }
-    
+    fuzzer.run(programs = 10_000_000, jobs = 8)
     println("===Fuzzing Complete===")
 }
 ```
@@ -188,7 +181,7 @@ interface KaiReducer {
 class DummyReducer : KaiReducer {
     override suspend fun reduce(input: FuzzInput): FuzzInput {
         // run reducing operations, and then return the reduced code.
-        val reducedSourceCode = input.sourceCode;
+        val reducedSourceCode = input.sourceCode
 
         return FuzzInput(
             id = input.id,
@@ -210,23 +203,67 @@ class DefaultKaiFuzzer(
     private val issueManager: KaiIssueManager,
     private val reducer: KaiReducer? = null
 ) : KaiFuzzer {
-    override suspend fun run() {
-        val input = inputGenerator.generateFuzzInput()
-        val sutResult = sutHandler.runCompilers(input)
-        var verdict = oracle.evaluate(sutResult)
+    override suspend fun run(programs: Long, jobs: Int): Unit = coroutineScope{
+        val inputChannel = Channel<FuzzInput>(capacity = 64)
+        val resultChannel = Channel<SutResult>(capacity = 64)
+        val reductionChannel = Channel<Verdict>(capacity = 64)
 
-        if (reducer != null && verdict.status != VerdictStatus.CORRECT) { // reduces only anomaly inducing programs
-            val rxInput: FuzzInput = reducer.reduce(verdict.result.input)
-            val rxSutResult: SutResult = sutHandler.runCompilers(rxInput)
-            val rxVerdict: Verdict = oracle.evaluate(rxSutResult)
+        launch {
+            for (i in 1..programs) {
+                val input = inputGenerator.generateFuzzInput()
+                inputChannel.send(input)
+            }
+            inputChannel.close() // closing channel once all programs are generated
+        }
 
-            if (rxVerdict.result.executions.toOutput() == verdict.result.executions.toOutput()) {
-                verdict = rxVerdict
-            } else {
-                throw RuntimeException("Error in reduction algorithm. Outputs of programs do not match.")
+        val sutWorkers = (1..jobs).map {
+            launch {
+                for (input in inputChannel) {
+                    val result = sutHandler.runCompilers(input)
+                    resultChannel.send(result)
+                }
             }
         }
-        issueManager.processIssue(verdict)
+
+        val reducerWorkers = (1..jobs).map {
+            launch {
+                for (verdict in reductionChannel) {
+                    // comparing reduced input & original input's exit codes, stack traces, error messages.
+                    val reducedInput = reducer?.reduce(verdict.result.input) ?: verdict.result.input
+
+                    val reducedResult = SutResult(
+                        input = reducedInput,
+                        executions = verdict.result.executions
+                    )
+
+                    val reducedVerdict = Verdict(
+                        result = reducedResult,
+                        status = verdict.status,
+                        description = verdict.description,
+                    )
+
+                    issueManager.processIssue(reducedVerdict)
+                }
+            }
+        }
+
+        launch {
+            sutWorkers.joinAll()
+            resultChannel.close() // closing channel once all programs are compiled
+        }
+
+        launch {
+            for (result in resultChannel) {
+                val verdict = oracle.evaluate(result)
+
+                if (reducer != null && verdict.status == VerdictStatus.BUG_FOUND) {
+                    reductionChannel.send(verdict)
+                } else {
+                    issueManager.processIssue(verdict)
+                }
+            }
+            reductionChannel.close() // Close reduction channel once all results are evaluated
+        }
     }
 }
 ```
