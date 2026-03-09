@@ -1,7 +1,6 @@
 package org.example
 
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import org.example.baseInterfaces.KaiFuzzer
 import org.example.dataModels.SutBackend
 import org.example.dummyImplementations.*
@@ -23,17 +22,12 @@ suspend fun main(): Unit = coroutineScope {
         sutHandler = mySutHandler,
         oracle = myOracle,
         issueManager = DummyIssueManager(),
-        reducer = DummyReducer() // reducer is optional
+        reducer = DummyReducer(),
     )
-    val programs = 5 // Number of programs to generate and evaluate
 
     println("===Initiating Kai Fuzzer===")
-
-    repeat(programs) {
-        launch {
-            fuzzer.run()
-        }
-    }
-
+    fuzzer.run(programs = 10_000_000, jobs = 8)
     println("===Fuzzing Complete===")
+
+    // need graceful shutdown, for safe exiting of progress for with Ctrl + C
 }
