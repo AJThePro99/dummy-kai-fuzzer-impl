@@ -225,24 +225,26 @@ class DefaultKaiFuzzer(
             }
         }
 
-        val reducerWorkers = (1..jobs).map {
-            launch {
-                for (verdict in reductionChannel) {
-                    // comparing reduced input & original input's exit codes, stack traces, error messages.
-                    val reducedInput = reducer?.reduce(verdict.result.input) ?: verdict.result.input
+        if (reducer != null){
+            (1..jobs).forEach { _ ->
+                launch {
+                    for (verdict in reductionChannel) {
+                        // comparing reduced input & original input's exit codes, stack traces, error messages.
+                        val reducedInput = reducer.reduce(verdict.result.input) ?: verdict.result.input
 
-                    val reducedResult = SutResult(
-                        input = reducedInput,
-                        executions = verdict.result.executions
-                    )
+                        val reducedResult = SutResult(
+                            input = reducedInput,
+                            executions = verdict.result.executions
+                        )
 
-                    val reducedVerdict = Verdict(
-                        result = reducedResult,
-                        status = verdict.status,
-                        description = verdict.description,
-                    )
+                        val reducedVerdict = Verdict(
+                            result = reducedResult,
+                            status = verdict.status,
+                            description = verdict.description,
+                        )
 
-                    issueManager.processIssue(reducedVerdict)
+                        issueManager.processIssue(reducedVerdict)
+                    }
                 }
             }
         }
